@@ -538,8 +538,10 @@ class TFModel(BaseModel):
             if len(tf.losses.get_losses()) == 0:
                 raise ValueError("Loss is not defined in the model %s" % self)
         else:
-            predictions = self._check_tensor('predictions')
-            targets = self._check_tensor('targets')
+            predictions_name = args.pop('predictions', 'predictions')
+            targets_name = args.pop('targets', 'targets')
+            predictions = self._check_tensor(predictions_name)
+            targets = self._check_tensor(targets_name)
 
             add_loss = args.pop('add_loss', False)
             if add_loss:
@@ -550,34 +552,23 @@ class TFModel(BaseModel):
                     tf.losses.add_loss(tensor_loss, loss_collection)
                 else:
                     tf.losses.add_loss(tensor_loss)
+            else:
+                return tensor_loss
 
     def _make_train_steps(self, config):
         """ Create different train steps """
-        if config.get('train_modes') is None:
-            config['train_modes'] = {}
+        _train_steps = config.get('train_steps')
 
-        _optimizer = config.get('optimizer')
-        _scope = config.get('scope')
-        _decay = config.get('decay')
-        if _optimizer is not None:
-            config['train_modes'].update({'': {'optimizer': _optimizer,
-                                               'scope': _scope,
-                                               'decay': _decay}})
+        # if optimizer and loss are supplied directly in the config
+        if _train_steps is None:
+            _params = {key: config.get(key) for key in ('optimizer', 'scope', 'decay', 'loss')}
+            config['train_steps'].update({'': _params})
 
-        for key, subconfig in config.get('train_modes').items():
-            if subconfig.get('optimizer') is None:
-                subconfig.update({'optimizer': _optimizer})
-            if subconfig.get('scope') is None:
-                subconfig.update({'scope': _scope})
-            if subconfig.get('decay') is None:
-                subconfig.update({'decay': _decay})
-
+        # make all train steps
         train_steps = {}
-        for key, subconfig in config['train_modes'].items():
+        for key, subconfig in config['train_steps'].items():
+            subconfig['optimizer'] = self.default_config()['optimizer'].update(subconfig['optimizer'])
             optimizer_ = self._make_optimizer(subconfig)
-            print('\n\n\nCURRENT KEY: ', key)
-            print('SUBCONFIG: ', subconfig)
-            print('OPTIMIZER_: ', optimizer_, '\n')
 
             if optimizer_:
                 update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -595,10 +586,10 @@ class TFModel(BaseModel):
                         scope_collection = [item for item in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
                                             if item not in scope_collection]
 
-                    print('SCOPE COLLECTION')
-                    _ = [print(item) for item in scope_collection]
+                    loss = self._make_loss(subconfig)
+                    self.store_to_attr('loss_' + key, loss)
 
-                    train_step = optimizer_.minimize(self.loss,
+                    train_step = optimizer_.minimize(self._check_tensor('loss_' + key),
                                                      global_step=self.global_step,
                                                      var_list=scope_collection)
                     train_steps.update({key: train_step})
@@ -804,7 +795,6 @@ class TFModel(BaseModel):
 
             model.train(fetches='loss', images=B('images'), labels=B('labels'))
         """
-        print(kwargs)
         with self.graph.as_default():
             feed_dict = {} if feed_dict is None else feed_dict
             feed_dict = {**feed_dict, **kwargs}
@@ -1265,6 +1255,7 @@ class TFModel(BaseModel):
         config['optimizer'] = ('Adam', dict())
         config['decay'] = (None, dict())
         config['scope'] = ''
+        config['train_steps'] = None
         config['common'] = {'batch_norm': {'momentum': .1}}
 
         return config
