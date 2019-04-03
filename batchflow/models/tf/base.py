@@ -249,9 +249,6 @@ class TFModel(BaseModel):
                 self._build(config)
 
                 if self.train_steps is None:
-                    self._make_loss(config)
-                    self.store_to_attr('loss', tf.losses.get_total_loss())
-
                     train_steps = self._make_train_steps(config)
                     self.store_to_attr('train_steps', train_steps)
                 else:
@@ -563,11 +560,17 @@ class TFModel(BaseModel):
         if _train_steps is None:
             _params = {key: config.get(key) for key in ('optimizer', 'scope', 'decay', 'loss')}
             config['train_steps'].update({'': _params})
+            total = lambda loss: tf.losses.get_total_loss()
+        else:
+            total = lambda loss: loss
 
         # make all train steps
         train_steps = {}
         for key, subconfig in config['train_steps'].items():
-            subconfig['optimizer'] = self.default_config()['optimizer'].update(subconfig['optimizer'])
+            # update default params of optimizer by given ones
+            pass
+
+            # make optimizer and train step
             optimizer_ = self._make_optimizer(subconfig)
 
             if optimizer_:
@@ -587,7 +590,7 @@ class TFModel(BaseModel):
                                             if item not in scope_collection]
 
                     loss = self._make_loss(subconfig)
-                    self.store_to_attr('loss_' + key, loss)
+                    self.store_to_attr('loss_' + key, total(loss))
 
                     train_step = optimizer_.minimize(self._check_tensor('loss_' + key),
                                                      global_step=self.global_step,
